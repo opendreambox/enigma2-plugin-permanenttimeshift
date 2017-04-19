@@ -1,4 +1,12 @@
-include $(top_srcdir)/Rules-cpp.mak
+AM_CPPFLAGS = \
+	@PYTHON_CPPFLAGS@ \
+	-include Python.h
+
+AM_CXXFLAGS = \
+	-Wall \
+	-fno-exceptions \
+	@ENIGMA2_CFLAGS@ \
+	@PTHREAD_CFLAGS@
 
 plugindir = $(libdir)/enigma2/python/Plugins/Extensions/PermanentTimeshift
 
@@ -8,4 +16,6 @@ eitsave_la_SOURCES = \
 	eitsave.cpp 
 
 eitsave_la_LDFLAGS = \
-	$(PLUGIN_LIBTOOL_FLAGS)
+	-avoid-version \
+	-module \
+	-shared
