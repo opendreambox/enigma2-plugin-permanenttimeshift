@@ -2,7 +2,7 @@
 # Permanent Timeshift Plugin for Enigma2 Dreamboxes
 # Coded by Homey (c) 2013
 #
-# Version: 1.5
+# Version: 2.0
 # Support: www.dreambox-plugins.de
 #####################################################
 from Components.ActionMap import ActionMap
@@ -27,12 +27,14 @@ from Screens.Standby import Standby, TryQuitMainloop
 from Screens.PVRState import TimeshiftState
 from ServiceReference import ServiceReference
 from Tools import Directories, ASCIItranslit, Notifications
+from Tools.BoundFunction import boundFunction
 from Tools.Directories import fileExists, copyfile
 from Plugins.Plugin import PluginDescriptor
 from RecordTimer import RecordTimer, RecordTimerEntry, parseEvent
 
 from random import randint
 from enigma import eTimer, eServiceCenter, eBackgroundFileEraser, iPlayableService, iRecordableService, iServiceInformation
+from enigma import eEPGCache
 from os import environ, stat as os_stat, listdir as os_listdir, link as os_link, path as os_path, system as os_system, statvfs
 from time import localtime, time, gmtime, strftime
 from timer import TimerEntry
@@ -40,13 +42,15 @@ from timer import TimerEntry
 import Screens.InfoBar
 import Screens.Standby
 
+from skin import loadSkin
+
 from Tools.Log import Log
 
 ##############################
 #####  CONFIG SETTINGS   #####
 ##############################
 
-VERSION = "1.5"
+VERSION = "2.0"
 config.plugins.pts = ConfigSubsection()
 config.plugins.pts.enabled = ConfigYesNo(default = True)
 config.plugins.pts.maxevents = ConfigInteger(default=5, limits=(1, 99))
@@ -57,28 +61,109 @@ config.plugins.pts.stopwhilerecording = ConfigYesNo(default = False)
 config.plugins.pts.favoriteSaveAction = ConfigSelection([("askuser", _("Ask user")),("savetimeshift", _("Save and stop")),("savetimeshiftandrecord", _("Save and record")),("noSave", _("Don't save"))], "askuser")
 config.plugins.pts.permanentrecording = ConfigYesNo(default = False)
 config.plugins.pts.isRecording = NoSave(ConfigYesNo(default = False))
+config.plugins.pts.showrealremainingtime = ConfigYesNo(default = True)
+
+####################################
+###  OVERWRITE CHANNELSELECTION  ###
+####################################
+## show a message if you want to zap in channellist on active timeshifting ##
+
+from Screens.ChannelSelection import ChannelSelection
+ChannelSelection_ori_channelSelected = ChannelSelection.channelSelected
+
+def ChannelSelection_channelSelected(self):
+	if config.plugins.pts.enabled.value and InfoBar.instance.timeshift_enabled and InfoBar.instance.isSeekable():
+		self.session.openWithCallback(boundFunction(ChannelSelection_channelSelected_callback, self), MessageBox, _("You are in active timeshift-mode\n\nDo you really want to zap?"), MessageBox.TYPE_YESNO, default = False)
+	else:
+		ChannelSelection_ori_channelSelected(self)
+
+def ChannelSelection_channelSelected_callback(self, ret):
+	if ret:
+		ChannelSelection_ori_channelSelected(self)
+
+ChannelSelection.channelSelected = ChannelSelection_channelSelected
+### END OVERWRITE CHANNELSELECTION ##########
+
+###################################
+###  PTS TimeshiftSummaryScreen  ###
+###################################
+from Components.Sources.PTSCurrentService import PTSCurrentService
+
+current_dialog = None
+
+class PermanentTimeshiftSummary(Screen):
+	skin = loadSkin("/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/skin/skin_display.xml")
+
+	def __init__(self, session, parent):
+		Screen.__init__(self, session, parent)
+		self.skinName = "PermanentTimeshiftSummary"
+		self["eventname"] = Label(text="")
+		self["Service"] = PTSCurrentService(session.nav, parent)
 
 ###################################
 ###  PTS TimeshiftState Screen  ###
 ###################################
 
+from Screens.PVRState import PVRState
+
+class InfoBarPVRState:
+	def __init__(self, screen=PVRState, force_show = False, parent = None):
+		self.onPlayStateChanged.append(self.__playStateChanged)
+		self.pvrStateDialog = self.session.instantiateDialog(screen, parent)
+		self.pvrStateDialog.neverAnimate()
+		self.onShow.append(self._mayShow)
+		self.onHide.append(self.pvrStateDialog.hide)
+		#self.onClose.append(self.__delPvrState)
+		self.force_show = force_show
+
+#	def __delPvrState(self):
+#		self.session.deleteDialog(self.pvrStateDialog)
+#		self.pvrStateDialog = None
+
+	def _mayShow(self):
+		if self.execing and self.seekstate != self.SEEK_STATE_PLAY:
+			self.pvrStateDialog.show()
+
+	def __playStateChanged(self, state):
+		playstateString = state[3]
+		self.pvrStateDialog["state"].setText(playstateString)
+
+		# if we return into "PLAY" state, ensure that the dialog gets hidden if there will be no infobar displayed
+		# also hide if service stopped and returning into MovieList
+		if not config.usage.show_infobar_on_skip.value and self.seekstate in (self.SEEK_STATE_PLAY, self.SEEK_STATE_STOP) and not self.force_show:
+			self.pvrStateDialog.hide()
+		else:
+			self._mayShow()
+
+
+class InfoBarTimeshiftState(InfoBarPVRState):
+	def __init__(self, parent):
+		InfoBarPVRState.__init__(self, screen=TimeshiftState, force_show = True, parent = parent)
+		self.__hideTimer = eTimer()
+		self.__hideTimer_conn = self.__hideTimer.timeout.connect(self.__hideTimeshiftState)
+
+	def _mayShow(self):
+		if self.execing and self.timeshift_enabled:
+			self.pvrStateDialog.show()
+			if self.seekstate == self.SEEK_STATE_PLAY and not self.shown:
+				self.__hideTimer.start(5*1000, True)
+
+	def __hideTimeshiftState(self):
+		self.pvrStateDialog.hide()
+
+class TimeshiftState(Screen):
+	skin = loadSkin("/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/skin/skin.xml")
+
+	def __init__(self, session, parent):
+		Screen.__init__(self, session, parent)
+		self.skinName = "PTSStandardTimeshiftState"
+		self["state"] = Label(text="")
+		self["eventname"] = Label(text="")
+		self["Service"] = PTSCurrentService(session.nav, parent)
+
+
 class PTSTimeshiftState(Screen):
-	skin = """
-		<screen position="center,40" zPosition="2" size="420,70" backgroundColor="transpBlack" flags="wfNoBorder">
-			<widget name="state" position="10,3" size="80,27" font="Regular;20" halign="center" backgroundColor="transpBlack" />
-			<widget source="session.CurrentService" render="Label" position="95,5" size="120,27" font="Regular;20" halign="left" foregroundColor="white" backgroundColor="transpBlack">
-				<convert type="ServicePosition">Position</convert>
-			</widget>
-			<widget source="session.CurrentService" render="Label" position="335,5" size="70,27" font="Regular;20" halign="left" foregroundColor="white" backgroundColor="transpBlack">
-				<convert type="ServicePosition">Length</convert>
-			</widget>
-			<widget name="PTSSeekPointer" position="8,30" zPosition="3" size="19,50" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/timeline-now.png" alphatest="on" />
-			<ePixmap position="10,33" size="840,15" zPosition="1" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/slider_back.png" alphatest="on"/>
-				<widget source="session.CurrentService" render="Progress" position="10,33" size="390,15" zPosition="2" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/slider.png" transparent="1">
-				<convert type="ServicePosition">Position</convert>
-			</widget>
-			<widget name="eventname" position="10,49" zPosition="4" size="420,20" font="Regular;18" halign="center" backgroundColor="transpBlack" />
-		</screen>"""
+	skin = loadSkin("/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/skin/skin.xml")
 
 	def __init__(self, session):
 		Screen.__init__(self, session)
@@ -197,11 +282,13 @@ class CreateAPSCFilesTask(Task):
 ###########################
 #####  Class InfoBar  #####
 ###########################
-class InfoBar(InfoBarOrg):
+class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 	def __init__(self, session):
+		self.pts_last_SeekState = 0
 		InfoBarOrg.__init__(self, session)
 		InfoBarOrg.instance = self
-
+		InfoBarTimeshiftState.__init__(self, self)
+		
 		self.__event_tracker = ServiceEventTracker(screen = self, eventmap =
 			{
 				iPlayableService.evStart: self.__evStart,
@@ -281,10 +368,19 @@ class InfoBar(InfoBarOrg):
 		self.pts_curevent_servicerefname = ""
 		self.pts_curevent_station = ""
 		self.pts_curevent_eventid = None
+		self.pts_list = dict() # save the eventinfos of the ptsfiles
 
+		# set summary-variables
+		self.pts_summary_org = None
+		self.pts_summary = None
+		self.pts_InfoBar_org = None
+		
 		# Init PTS Infobar
 		self.pts_seekpointer_MinX = 8
 		self.pts_seekpointer_MaxX = 396 # make sure you can divide this through 2
+		
+		# set __restoreState for setSummaryScreen
+		self.onShown.append(self.__restoreState)
 
 	def __evStart(self):
 		self.service_changed = 1
@@ -307,6 +403,7 @@ class InfoBar(InfoBarOrg):
 			self.pts_cleanUp_timer.start(3000, True)
 
 	def __evEventInfoChanged(self):
+
 		if not config.plugins.pts.enabled.value:
 			return
 
@@ -357,6 +454,10 @@ class InfoBar(InfoBarOrg):
 			enabled = True
 
 		self["PTSSeekPointerActions"].setEnabled(enabled)
+		
+		# set Display to InfoBarSummary if timeshift is ended
+		if InfoBar and InfoBar.instance and self.execing and config.plugins.pts.enabled.value and self.timeshift_enabled and not self.isSeekable():
+			self.setSummary(False)
 
 		# Reset Seek Pointer And Eventname in InfoBar
 		if config.plugins.pts.enabled.value and config.plugins.pts.showinfobar.value and self.timeshift_enabled and not self.isSeekable():
@@ -374,15 +475,6 @@ class InfoBar(InfoBarOrg):
 	def activatePermanentTimeshift(self):
 		if self.ptsCheckTimeshiftPath() is False or self.session.screen["Standby"].boolean is True or self.ptsLiveTVStatus() is False or (config.plugins.pts.stopwhilerecording.value and self.pts_record_running):
 			return
-
-		# Replace PVR Timeshift State Icon
-		if config.plugins.pts.showinfobar.value:
-			if self.pts_pvrStateDialog != "PTSTimeshiftState":
-				self.pts_pvrStateDialog = "PTSTimeshiftState"
-				self.pvrStateDialog = self.session.instantiateDialog(PTSTimeshiftState)
-		elif not config.plugins.pts.showinfobar.value and self.pts_pvrStateDialog != "TimeshiftState":
-			self.pts_pvrStateDialog = "TimeshiftState"
-			self.pvrStateDialog = self.session.instantiateDialog(TimeshiftState)
 
 		# Set next-file on event change only when watching latest timeshift ...
 		if self.isSeekable() and self.pts_eventcount == self.pts_currplaying:
@@ -420,6 +512,31 @@ class InfoBar(InfoBarOrg):
 		else:
 			self.pts_eventcount = 0
 
+	# set the correct pvrStateDialog 
+	def setPVRStateDialog(self):
+		if config.plugins.pts.showinfobar.value and self.pts_pvrStateDialog != "PTSTimeshiftState":
+			if self.pts_InfoBar_org is None:
+				self.pts_InfoBar_org = self.pvrStateDialog
+			self.pts_pvrStateDialog = "PTSTimeshiftState"
+			self.pvrStateDialog = self.session.instantiateDialog(PTSTimeshiftState)
+		elif self.pts_pvrStateDialog != "TimeshiftState":
+			self.pts_pvrStateDialog = "TimeshiftState"
+			if self.pts_InfoBar_org is not None:
+				self.pvrStateDialog = self.pts_InfoBar_org
+			else:
+				self.pvrStateDialog = self.session.instantiateDialog(TimeshiftState, self)
+	
+	# activates timeshift, and seeks to (almost) the end
+	def activateTimeshiftEnd(self, back = True):
+		InfoBarOrg.activateTimeshiftEnd(self, back)
+		self.setPVRStateDialog()
+		self.setSummary(True)
+		#set eventname in PTS Infobar and Display if pts is enabled
+		if config.plugins.pts.enabled.value:
+			self.pvrStateDialog["eventname"].setText(self.pts_curevent_name)
+			self.session.summary["eventname"].setText(self.pts_curevent_name)
+		
+
 	def startTimeshift(self):
 		if config.plugins.pts.enabled.value:
 			self.pts_delay_timer.stop()
@@ -427,6 +544,100 @@ class InfoBar(InfoBarOrg):
 			self.activateTimeshiftEndAndPause()
 		else:
 			InfoBarOrg.startTimeshift(self)
+
+	def setSummary(self, setPTSSummary = False):
+		if not config.plugins.pts.enabled.value:
+			return
+		self.session.summary.hide()
+		if setPTSSummary:
+			if self.pts_summary_org is None:
+				self.pts_summary_org = self.session.summary
+			if self.pts_summary is None:
+				self.pts_summary = self.session.instantiateSummaryDialog(PermanentTimeshiftSummary, self.session.current_dialog)
+				self.session.current_dialog.addSummary(self.pts_summary) #to prevent crash at summaries.remove in GUISkin
+			self.session.summary = self.pts_summary
+		else:
+			if self.pts_summary_org and self.session.summary != self.pts_summary_org:
+				self.session.summary = self.pts_summary_org
+		self.session.summary.show()
+
+	def __hideState_onExecEnd(self):
+		self.pvrStateDialog.hide() # hide pts Infobar on open other screens
+	
+	def __restoreState(self):
+		if self.pts_summary_org is None:
+			return
+		if config.plugins.pts.enabled.value:
+			if self.isSeekable():
+				self.setSummary(True)
+			else:
+				self.setSummary(False)
+
+	##############################################################################
+	## Skin positions-functions
+	def getLength(self):
+		try:
+			if not config.plugins.pts.showrealremainingtime.value:
+				return self.ptsGetLength()
+		except:
+			pass
+		
+		try:
+			if self.pts_eventcount != self.pts_currplaying:
+				before_pts = self.pts_list[str(self.pts_currplaying)]['before_pts']*90000
+				return int(before_pts) + self.ptsGetLength()
+			else:
+				duration = int( self.pts_list[str(self.pts_currplaying)]['end'] - self.pts_list[str(self.pts_currplaying)]['begin']) - (int(config.recording.margin_after.value * 60) + int(config.recording.margin_before.value * 60) )
+				return int(duration) * 90000
+			
+		except:
+			# Fallback
+			return self.ptsGetLength()
+
+	def getLivePosition(self): #get Position of Live-TV-Event
+		try:
+			#if not current live-event, give back no LivePosition
+			if not config.plugins.pts.showrealremainingtime.value or self.pts_eventcount != self.pts_currplaying:
+				return 0
+		except:
+			pass
+		
+		try:
+			begin_time = int(self.pts_curevent_begin + int(config.recording.margin_before.value * 60) )
+			live_position = int(time() - begin_time)*90000
+			return live_position
+		except:
+			return self.ptsGetLength()
+		
+	def getPTSPosition(self): #get Position of PTS include the time before pts
+		
+		try:
+			if not config.plugins.pts.showrealremainingtime.value: 
+				return self.ptsGetPosition()
+		except:
+			pass
+		
+		try:
+			before_pts = self.pts_list[str(self.pts_currplaying)]['before_pts']*90000
+			return int(before_pts) + self.ptsGetPosition()
+		except:
+			return self.ptsGetPosition()
+
+	def getBeforePTSPosition(self): #get Position before PTS startet
+		try:
+			if not config.plugins.pts.showrealremainingtime.value:
+				# get begin from currplaying-file
+				return 0
+		except:
+			pass
+		
+		try:
+			before_pts = self.pts_list[str(self.pts_currplaying)]['before_pts']*90000
+			return int(before_pts)
+		except:
+			return 0
+
+	##############################################################################
 
 	def stopTimeshift(self):
 		if not self.timeshift_enabled:
@@ -439,10 +650,16 @@ class InfoBar(InfoBarOrg):
 				self.ptsSetNextPlaybackFile(None)
 				if self.seekstate != self.SEEK_STATE_PLAY:
 					self.setSeekState(self.SEEK_STATE_PLAY)
+				self.setSeekState(self.SEEK_STATE_STOP)
 				self.doSeek(3600 * 24 * 90000)
+				self.doSeek(3600 * 24 * 90000) #make second if sometimes first not work
+				self.setSummary(False)
 				return 1
+			self.setSummary(False)
 			return 0
 		InfoBarOrg.stopTimeshift(self)
+		self.setSummary(False)
+
 
 	def stopTimeshiftConfirmed(self, confirmed, switchToLive=True):
 		was_enabled = self.timeshift_enabled
@@ -765,6 +982,10 @@ class InfoBar(InfoBarOrg):
 			self.ptsSeekPointerOK()
 		elif self.save_current_timeshift and self.timeshift_enabled:
 			self.saveTimeshiftActions(postaction="historyBack")
+		elif self.timeshift_enabled and self.isSeekable():
+			#return #skip if timeshifting
+			self.doSeekRelative(-self.ptsGetPosition())
+			#self.doSeek(0)
 		else:
 			InfoBarOrg.historyBack(self)
 
@@ -777,6 +998,9 @@ class InfoBar(InfoBarOrg):
 			self.ptsSeekPointerOK()
 		elif self.save_current_timeshift and self.timeshift_enabled:
 			self.saveTimeshiftActions(postaction="historyNext")
+		elif self.timeshift_enabled and self.isSeekable():
+			#return #skip if timeshifting
+			self.doSeekRelative(self.ptsGetLength()-self.ptsGetPosition())
 		else:
 			InfoBarOrg.historyNext(self)
 
@@ -812,6 +1036,8 @@ class InfoBar(InfoBarOrg):
 				self.setSeekState(self.SEEK_STATE_PLAY)
 			self.ptsSeekPointerOK()
 			return
+		if self.timeshift_enabled and self.isSeekable() and (number == 0 or number == 2 or number == 5 or number == 8):
+			return # ingnore key wile timeshifting
 
 		if self.pts_blockZap_timer.isActive():
 			return
@@ -828,20 +1054,15 @@ class InfoBar(InfoBarOrg):
 		if InfoBar and InfoBar.instance and self.execing and self.timeshift_enabled and self.isSeekable():
 			self.ptsSeekPointerSetCurrentPos()
 			self.pvrStateDialog.show()
-
-			self.pvrstate_hide_timer = eTimer()
-			self.pvrstate_hide_timer_conn = self.pvrstate_hide_timer.timeout.connect(self.pvrStateDialog.hide)
-			self.pvrstate_hide_timer.stop()
-
-			if self.seekstate == self.SEEK_STATE_PLAY:
-				idx = config.usage.infobar_timeout.index
-				if not idx:
-					idx = 5
-				self.pvrstate_hide_timer.start(idx*1000, True)
-			else:
-				self.pvrstate_hide_timer.stop()
 		elif self.execing and self.timeshift_enabled and not self.isSeekable():
-			self.pvrStateDialog.hide()
+			# show ptsInfoBar for 1 Seconds after Stop Timeshift
+			if self.pts_last_SeekState == self.SEEK_STATE_STOP:
+				self.pvrStateDialog["state"].setText(self.pts_last_SeekState[3])
+				self.pvrstate_hide_timer = eTimer()
+				self.pvrstate_hide_timer_conn = self.pvrstate_hide_timer.timeout.connect(self.pvrStateDialog.hide)
+				self.pvrstate_hide_timer.start(1*1000, True)
+			else:
+				self.pvrStateDialog.hide()
 		else:
 			InfoBarOrg._mayShow(self)
 
@@ -850,9 +1071,14 @@ class InfoBar(InfoBarOrg):
 		self.pts_lastseekspeed = self.seekstate[1]
 
 	def setSeekState(self, state, onlyGUI = False):
+		# SEEK_STATE_PLAY = (0, 0, 0, ">")
+		# SEEK_STATE_PAUSE = (1, 0, 0, "||")
+		# SEEK_STATE_EOF = (1, 0, 0, "END")
+		# SEEK_STATE_STOP = (0, 0, 0, "STOP")
 		InfoBarOrg.setSeekState(self, state, onlyGUI)
 		if not config.plugins.pts.enabled.value or not self.timeshift_enabled:
 			return
+		self.pts_last_SeekState = state
 		self.ptsHandleSeekBackward()
 
 	def doSeekRelative(self, pts):
@@ -951,6 +1177,28 @@ class InfoBar(InfoBarOrg):
 		except:
 			Log.i("[PTS-Plugin] IO-Error while cleaning Timeshift Folder ...")
 
+	def ptsGetEvent(self):
+		event = None
+		try:
+			serviceref = self.session.nav.getCurrentlyPlayingServiceReference()
+			serviceHandler = eServiceCenter.getInstance()
+			info = serviceHandler.info(serviceref)
+
+			self.pts_curevent_servicerefname = serviceref.toString()
+			self.pts_curevent_station = info.getName(serviceref)
+
+			service = self.session.nav.getCurrentService()
+			info = service and service.info()
+			event = info and info.getEvent(0)
+		except Exception, errormsg:
+			Notifications.AddNotification(MessageBox, _("Getting Event Info failed!")+"\n\n%s" % errormsg, MessageBox.TYPE_ERROR, timeout=10)
+
+		if event is not None:
+			curEvent = parseEvent(event)
+			return curEvent
+		
+		return None
+
 	def ptsGetEventInfo(self):
 		event = None
 		try:
@@ -974,6 +1222,15 @@ class InfoBar(InfoBarOrg):
 			self.pts_curevent_name = curEvent[2]
 			self.pts_curevent_description = curEvent[3]
 			self.pts_curevent_eventid = curEvent[4]
+			
+			# save the eventinfo for the pts-files
+			begin_time = int(self.pts_curevent_begin + int(config.recording.margin_before.value * 60) )
+			before_pts = int(time() - begin_time -2)
+			self.pts_list[str(self.pts_eventcount)]= {'begin': self.pts_curevent_begin,'end': self.pts_curevent_end, 'name': self.pts_curevent_name, 'description': self.pts_curevent_description, 'eventid': self.pts_curevent_eventid, 'before_pts': before_pts}
+			
+			# set new Eventname to normal PTS Infobar if current Live-Event
+			if self.pts_currplaying == self.pts_eventcount:
+				self.pvrStateDialog["eventname"].setText(self.pts_curevent_name)
 
 	def ptsFrontpanelActions(self, action=None):
 		if self.session.nav.RecordTimer.isRecording() or SystemInfo.get("NumFrontpanelLEDs", 0) == 0:
@@ -1339,6 +1596,15 @@ class InfoBar(InfoBarOrg):
 
 		if not fileExists("%s/pts_livebuffer.%s" % (config.usage.timeshift_path.value,self.pts_currplaying), 'r'):
 			self.pts_currplaying = self.pts_eventcount
+		
+		# Set Eventname in TimeshiftState-Screen
+		try:
+			eventname = self.pts_list[str(self.pts_currplaying)]['name']
+			self.pvrStateDialog["eventname"].setText(eventname)
+			self.session.summary["eventname"].setText(eventname)
+			
+		except:
+			pass
 
 		# Set Eventname in PTS InfoBar
 		if config.plugins.pts.enabled.value and config.plugins.pts.showinfobar.value and self.pts_pvrStateDialog == "PTSTimeshiftState":
@@ -1354,6 +1620,22 @@ class InfoBar(InfoBarOrg):
 			except Exception, errormsg:
 				self.pvrStateDialog["eventname"].setText("")
 
+		# show pvrStateDialog after change timeshiftfile
+		self.pvrStateDialog.show()
+
+		self.pvrstate_hide_timer = eTimer()
+		self.pvrstate_hide_timer_conn = self.pvrstate_hide_timer.timeout.connect(self.pvrStateDialog.hide)
+		self.pvrstate_hide_timer.stop()
+
+		if self.seekstate == self.SEEK_STATE_PLAY:
+			idx = config.usage.infobar_timeout.index
+			if not idx:
+				idx = 5
+			self.pvrstate_hide_timer.start(idx*1000, True)
+		else:
+			self.pvrstate_hide_timer.stop()
+		# Ende show pvrStateDialog
+		
 		# Get next pts file ...
 		if self.pts_currplaying+1 > config.plugins.pts.maxevents.value:
 			nextptsfile = 1
@@ -1388,10 +1670,22 @@ class InfoBar(InfoBarOrg):
 		if ts is None:
 			return
 
+		# Set Eventname in TimeshiftState-Screen
+		try:
+			if self.pts_eventcount==self.pts_currplaying: # set only on current timeshiftfile
+				eventname = self.pts_list[str(self.pts_currplaying)]['name']
+				self.pvrStateDialog["eventname"].setText(eventname)
+				self.session.summary["eventname"].setText(eventname)
+		except:
+			pass
+
 		try:
 			next_file = "%s/%s" % (config.usage.timeshift_path.value, nexttsfile) if nexttsfile else ""
 			Log.i("[PTS-Plugin] setNextPlaybackFile(%s)" % next_file)
 			ts.setNextPlaybackFile(next_file)
+			#== fix for set switchtolive
+			if nexttsfile and self.pts_currplaying != self.pts_eventcount:
+				self.pts_switchtolive=False
 		except:
 			Log.i("[PTS-Plugin] setNextPlaybackFile() not supported by OE. Enigma2 too old !?")
 
@@ -1601,7 +1895,8 @@ class PermanentTimeShiftSetup(Screen, ConfigListScreen):
 				getConfigListEntry(_("Permanent Timeshift Start Delay"), config.plugins.pts.startdelay),
 				getConfigListEntry(_("Timeshift-Save Action on zap"), config.plugins.pts.favoriteSaveAction),
 				getConfigListEntry(_("Stop timeshift while recording?"), config.plugins.pts.stopwhilerecording),
-				getConfigListEntry(_("Show PTS Infobar while timeshifting?"), config.plugins.pts.showinfobar)
+				getConfigListEntry(_("Show PTS Infobar while timeshifting?"), config.plugins.pts.showinfobar),
+				getConfigListEntry(_("Show real remainingtime while timeshifting?"), config.plugins.pts.showrealremainingtime)
 			))
 
 		# Permanent Recording Hack

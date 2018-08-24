@@ -1,1 +1,1 @@
-SUBDIRS = src meta images
+SUBDIRS = src meta images Components skin

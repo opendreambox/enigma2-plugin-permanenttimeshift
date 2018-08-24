@@ -23,5 +23,9 @@ meta/Makefile
 src/Makefile
 src/createapscfiles/Makefile
 src/eitsave/Makefile
+Components/Makefile
+Components/Converter/Makefile
+Components/Sources/Makefile
+skin/Makefile
 ])
 AC_OUTPUT
