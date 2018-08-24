@@ -1,0 +1,44 @@
+<skin>
+
+	<screen name="PTSStandardTimeshiftState" position="center,75" size="940,60" backgroundColor="background" flags="wfNoBorder">
+		<widget name="state" position="10,3" size="100,30" font="Regular;23" halign="center" backgroundColor="background"/>
+		<widget source="session.CurrentService" render="Label" position="115,5" size="80,30" font="Regular;23" halign="right" foregroundColor="white" backgroundColor="background">
+			<convert type="ServicePosition">Position</convert>
+		</widget>
+		<eLabel text="/" position="198,5" size="10,30" font="Regular;23" halign="center" foregroundColor="white" backgroundColor="background"/>
+		<widget source="session.CurrentService" render="Label" position="212,5" size="80,30" font="Regular;23" halign="left" foregroundColor="white" backgroundColor="background">
+			<convert type="ServicePosition">Length</convert>
+		</widget>
+		<widget name="eventname" position="300,5" size="500,30" font="Regular;23" halign="center" backgroundColor="background" />
+		<widget source="Service" render="Label" position="840,5" size="100,30" font="Regular;23" halign="left" foregroundColor="white" backgroundColor="background">
+			<convert type="PTSTimeshiftPosition">Remaining,Negate</convert>
+		</widget>
+		<eLabel position="20,43" size="900,3" backgroundColor="grey" />
+		<widget source="Service" render="Progress" position="20,40" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/progress_pts_20.png" size="900,8" transparent="1" zPosition="2" >
+			<convert type="PTSTimeshiftPosition">Position</convert>
+		</widget>
+		<widget source="Service" render="Progress" position="20,40" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/progress_live_20.png" size="900,8" transparent="1" zPosition="1" >
+			<convert type="PTSLiveEventPosition">Position</convert>
+		</widget>
+		<widget source="Service" render="Progress" position="20,40" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/progress_before_20.png" size="900,8" transparent="1" zPosition="3" >
+			<convert type="PTSBeforePTSPosition">Position</convert>
+		</widget>
+	</screen>
+
+	<screen name="PTSTimeshiftState" position="center,40" zPosition="2" size="420,70" backgroundColor="transpBlack" flags="wfNoBorder">
+		<widget name="state" position="10,3" size="80,27" font="Regular;20" halign="center" backgroundColor="transpBlack" />
+		<widget source="session.CurrentService" render="Label" position="95,5" size="120,27" font="Regular;20" halign="left" foregroundColor="white" backgroundColor="transpBlack">
+			<convert type="ServicePosition">Position</convert>
+		</widget>
+		<widget source="session.CurrentService" render="Label" position="335,5" size="70,27" font="Regular;20" halign="left" foregroundColor="white" backgroundColor="transpBlack">
+			<convert type="ServicePosition">Length</convert>
+		</widget>
+		<widget name="PTSSeekPointer" position="8,30" zPosition="3" size="19,50" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/timeline-now.png" alphatest="on" />
+		<ePixmap position="10,33" size="840,15" zPosition="1" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/slider_back.png" alphatest="on"/>
+		<widget source="session.CurrentService" render="Progress" position="10,33" size="390,15" zPosition="2" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/slider.png" transparent="1">
+			<convert type="ServicePosition">Position</convert>
+		</widget>
+		<widget name="eventname" position="10,49" zPosition="4" size="420,20" font="Regular;18" halign="center" backgroundColor="transpBlack" />
+	</screen>
+
+</skin>

@@ -1,0 +1,40 @@
+<skin>
+	<screen id="3" name="PermanentTimeshiftSummary" position="0,0" size="400,240">
+		<widget source="session.CurrentService" render="Label" position="1,1" size="400,110" font="Display;60" halign="center" >
+			<convert type="ServiceName">Name</convert>
+		</widget>
+		<widget name="eventname" position="center, 65" size="400,80" font="Display;65" halign="center" valign="top" noWrap="1"  />
+		<widget source="Service" render="Progress" position="center, 139" transparent="1" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/progress_before_20.png" size="380,19" zPosition="3" borderWidth="1" >
+			<convert type="PTSBeforePTSPosition">Position</convert>
+		</widget>
+		<widget source="Service" render="Progress" position="center, 139" transparent="1" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/progress_pts_20.png" size="380,19" zPosition="2" borderWidth="1" >
+			<convert type="PTSTimeshiftPosition">Position</convert>
+		</widget>
+		<widget source="Service" render="Progress" position="center, 139" transparent="1" pixmap="/usr/lib/enigma2/python/Plugins/Extensions/PermanentTimeshift/images/progress_live_20.png" size="380,19" zPosition="1" borderWidth="1" >
+			<convert type="PTSLiveEventPosition">Position</convert>
+		</widget>
+		<widget source="global.CurrentTime" render="Label" position="5,160" size="190,80" font="Display;80" halign="left" >
+			  <convert type="ClockToText">Format:%H:%M</convert>
+		</widget>
+		<widget source="Service" render="Label" position="190,170" size="210,70" font="Display;65" halign="right" noWrap="1" >
+			<convert type="PTSTimeshiftPosition">Remaining,Negate</convert>
+		</widget>
+	</screen>
+	
+	<screen id="1" name="PermanentTimeshiftSummary" position="0,0" size="132,64">
+		<widget source="session.CurrentService" render="Label" position="6,3" noWrap="1" size="120,17" font="Regular;15" halign="center" valign="top">
+			<convert type="ServiceName">Name</convert>
+		</widget>
+		<widget name="eventname" position="6,19" noWrap="1" size="120,22" font="Regular;18" halign="center" valign="top" />
+		<widget source="Service" render="Progress" position="5,41" size="122,5" borderWidth="1">
+			<convert type="PTSTimeshiftPosition">Position</convert>
+		</widget>
+		<widget source="global.CurrentTime" render="Label" position="5,47" size="58,20" font="Regular;17" halign="left" valign="center">
+			<convert type="ClockToText">Format:%H:%M</convert>
+		</widget>
+		<widget source="Service" render="Label" position="62,47" noWrap="1" size="68,20" font="Regular;16" halign="center" valign="center">
+			<convert type="PTSTimeshiftPosition">Remaining,Negate</convert>
+		</widget>
+	</screen>
+	
+</skin>
