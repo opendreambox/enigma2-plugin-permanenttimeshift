@@ -2,7 +2,7 @@
 # Permanent Timeshift Plugin for Enigma2 Dreamboxes
 # Coded by Homey (c) 2013
 #
-# Version: 2.0
+# Version: 2.1
 # Support: www.dreambox-plugins.de
 #####################################################
 from Components.ActionMap import ActionMap
@@ -50,7 +50,7 @@ from Tools.Log import Log
 #####  CONFIG SETTINGS   #####
 ##############################
 
-VERSION = "2.0"
+VERSION = "2.1"
 config.plugins.pts = ConfigSubsection()
 config.plugins.pts.enabled = ConfigYesNo(default = True)
 config.plugins.pts.maxevents = ConfigInteger(default=5, limits=(1, 99))
@@ -62,6 +62,9 @@ config.plugins.pts.favoriteSaveAction = ConfigSelection([("askuser", _("Ask user
 config.plugins.pts.permanentrecording = ConfigYesNo(default = False)
 config.plugins.pts.isRecording = NoSave(ConfigYesNo(default = False))
 config.plugins.pts.showrealremainingtime = ConfigYesNo(default = True)
+config.plugins.pts.showzapwarning = ConfigSelection([("no", _("No")),("simple", _("simple warning")),("advanced", _("advanced warning"))], "simple")
+config.plugins.pts.zapwarning_defaultanswer1	= ConfigYesNo(default = False)
+config.plugins.pts.zapwarning_defaultanswer2 = ConfigSelection([("3", _("Cancel")),("0", _("Save and stop")),("1", _("Save and record")),("2", _("Don't save"))], "3")
 
 ####################################
 ###  OVERWRITE CHANNELSELECTION  ###
@@ -72,14 +75,38 @@ from Screens.ChannelSelection import ChannelSelection
 ChannelSelection_ori_channelSelected = ChannelSelection.channelSelected
 
 def ChannelSelection_channelSelected(self):
-	if config.plugins.pts.enabled.value and InfoBar.instance.timeshift_enabled and InfoBar.instance.isSeekable():
-		self.session.openWithCallback(boundFunction(ChannelSelection_channelSelected_callback, self), MessageBox, _("You are in active timeshift-mode\n\nDo you really want to zap?"), MessageBox.TYPE_YESNO, default = False)
+	if config.plugins.pts.showzapwarning.value != "no" and config.plugins.pts.enabled.value and InfoBar.instance.timeshift_enabled and InfoBar.instance.isSeekable():
+		if config.plugins.pts.showzapwarning.value == "simple":
+			self.session.openWithCallback(boundFunction(ChannelSelection_channelSelected_callback1, self), MessageBox, _("You are in active timeshift-mode\n\nDo you really want to zap?"), MessageBox.TYPE_YESNO, default = config.plugins.pts.zapwarning_defaultanswer1.value)
+		if config.plugins.pts.showzapwarning.value == "advanced":
+			self.session.openWithCallback(boundFunction(ChannelSelection_channelSelected_callback2, self), ChoiceBox, \
+				title=_("You are in active timeshift-mode\n\nWhat do you want to do on zapping?"), \
+				list=((_("Save Timeshift as Movie and stop recording"), "savetimeshift"), \
+				(_("Save Timeshift as Movie and continue recording"), "savetimeshiftandrecord"), \
+				(_("Don't save Timeshift as Movie"), "noSave"), \
+				(_("Cancel"), "noZap")), selection = int(config.plugins.pts.zapwarning_defaultanswer2.value))
 	else:
 		ChannelSelection_ori_channelSelected(self)
 
-def ChannelSelection_channelSelected_callback(self, ret):
+def ChannelSelection_channelSelected_callback1(self, ret):
 	if ret:
 		ChannelSelection_ori_channelSelected(self)
+
+def ChannelSelection_channelSelected_callback2(self, ret):
+	print "=== PTS callback", ret
+	if ret is None:
+			return
+	if ret[1] == "noZap":
+		return
+	
+	if ret[1] == "savetimeshift":
+		InfoBar.instance.saveTimeshiftActions("savetimeshift", None)
+	elif ret[1] == "savetimeshiftandrecord":
+		InfoBar.instance.saveTimeshiftActions("savetimeshiftandrecord", None)
+	elif ret[1] == "noSave":
+		InfoBar.instance.save_current_timeshift = False
+		InfoBar.instance.saveTimeshiftActions("noSave", None)
+	ChannelSelection_ori_channelSelected(self)
 
 ChannelSelection.channelSelected = ChannelSelection_channelSelected
 ### END OVERWRITE CHANNELSELECTION ##########
@@ -515,21 +542,26 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 	# set the correct pvrStateDialog 
 	def setPVRStateDialog(self):
 		if config.plugins.pts.showinfobar.value and self.pts_pvrStateDialog != "PTSTimeshiftState":
+			#self.pvrStateDialog.hide()
 			if self.pts_InfoBar_org is None:
 				self.pts_InfoBar_org = self.pvrStateDialog
 			self.pts_pvrStateDialog = "PTSTimeshiftState"
 			self.pvrStateDialog = self.session.instantiateDialog(PTSTimeshiftState)
-		elif self.pts_pvrStateDialog != "TimeshiftState":
+			#self.pvrStateDialog.show()
+		elif not config.plugins.pts.showinfobar.value and self.pts_pvrStateDialog != "TimeshiftState":
+			#self.pvrStateDialog.hide()
 			self.pts_pvrStateDialog = "TimeshiftState"
 			if self.pts_InfoBar_org is not None:
 				self.pvrStateDialog = self.pts_InfoBar_org
 			else:
 				self.pvrStateDialog = self.session.instantiateDialog(TimeshiftState, self)
+			#self.pvrStateDialog.show()
 	
 	# activates timeshift, and seeks to (almost) the end
 	def activateTimeshiftEnd(self, back = True):
-		InfoBarOrg.activateTimeshiftEnd(self, back)
 		self.setPVRStateDialog()
+		InfoBarOrg.activateTimeshiftEnd(self, back)
+		#self.setPVRStateDialog()
 		self.setSummary(True)
 		#set eventname in PTS Infobar and Display if pts is enabled
 		if config.plugins.pts.enabled.value:
@@ -1005,13 +1037,13 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 			InfoBarOrg.historyNext(self)
 
 	def switchChannelUp(self):
-		if self.save_current_timeshift and self.timeshift_enabled:
+		if self.save_current_timeshift and self.timeshift_enabled and config.plugins.pts.showzapwarning.value != "advanced":
 			self.saveTimeshiftActions(postaction="switchChannelUp")
 		else:
 			InfoBarOrg.switchChannelUp(self)
 
 	def switchChannelDown(self):
-		if self.save_current_timeshift and self.timeshift_enabled:
+		if self.save_current_timeshift and self.timeshift_enabled and config.plugins.pts.showzapwarning.value != "advanced":
 			self.saveTimeshiftActions(postaction="switchChannelDown")
 		else:
 			InfoBarOrg.switchChannelDown(self)
@@ -1054,6 +1086,19 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 		if InfoBar and InfoBar.instance and self.execing and self.timeshift_enabled and self.isSeekable():
 			self.ptsSeekPointerSetCurrentPos()
 			self.pvrStateDialog.show()
+			
+			self.pvrstate_hide_timer = eTimer()
+			self.pvrstate_hide_timer_conn = self.pvrstate_hide_timer.timeout.connect(self.pvrStateDialog.hide)
+			self.pvrstate_hide_timer.stop()
+
+			if self.seekstate == self.SEEK_STATE_PLAY:
+				idx = config.usage.infobar_timeout.index
+				if not idx:
+					idx = 5
+				self.pvrstate_hide_timer.start(idx*1000, True)
+			else:
+				self.pvrstate_hide_timer.stop()
+
 		elif self.execing and self.timeshift_enabled and not self.isSeekable():
 			# show ptsInfoBar for 1 Seconds after Stop Timeshift
 			if self.pts_last_SeekState == self.SEEK_STATE_STOP:
@@ -1896,29 +1941,28 @@ class PermanentTimeShiftSetup(Screen, ConfigListScreen):
 				getConfigListEntry(_("Timeshift-Save Action on zap"), config.plugins.pts.favoriteSaveAction),
 				getConfigListEntry(_("Stop timeshift while recording?"), config.plugins.pts.stopwhilerecording),
 				getConfigListEntry(_("Show PTS Infobar while timeshifting?"), config.plugins.pts.showinfobar),
-				getConfigListEntry(_("Show real remainingtime while timeshifting?"), config.plugins.pts.showrealremainingtime)
+				getConfigListEntry(_("Show real remainingtime while timeshifting?"), config.plugins.pts.showrealremainingtime),
+				getConfigListEntry(_("Show zap-warning on active timeshifting?"), config.plugins.pts.showzapwarning)
 			))
-
+			if config.plugins.pts.showzapwarning.value == "simple":
+				self.list.append(getConfigListEntry(_("   select default answer for zap-warning-question"), config.plugins.pts.zapwarning_defaultanswer1))
+			elif config.plugins.pts.showzapwarning.value == "advanced":
+				self.list.append(getConfigListEntry(_("   select default answer for zap-warning-question"), config.plugins.pts.zapwarning_defaultanswer2))
+		
 		# Permanent Recording Hack
 		if fileExists("/usr/lib/enigma2/python/Plugins/Extensions/HouseKeeping/plugin.py"):
 			self.list.append(getConfigListEntry(_("Beta: Enable Permanent Recording?"), config.plugins.pts.permanentrecording))
-
+		
 		self["config"].list = self.list
 		self["config"].setList(self.list)
-
-	def keyLeft(self):
-		ConfigListScreen.keyLeft(self)
-		if self["config"].getCurrent()[1] == config.plugins.pts.enabled:
-			self.createSetup()
-
-	def keyRight(self):
-		ConfigListScreen.keyRight(self)
-		if self["config"].getCurrent()[1] == config.plugins.pts.enabled:
-			self.createSetup()
 
 	def changedEntry(self):
 		for x in self.onChangedEntry:
 			x()
+		current = self["config"].getCurrent()[1]
+		if (current == config.plugins.pts.enabled) or (current == config.plugins.pts.showzapwarning):
+			self.createSetup()
+			return
 
 	def getCurrentEntry(self):
 		return self["config"].getCurrent()[0]
