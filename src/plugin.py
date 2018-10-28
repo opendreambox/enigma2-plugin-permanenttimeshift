@@ -93,7 +93,6 @@ def ChannelSelection_channelSelected_callback1(self, ret):
 		ChannelSelection_ori_channelSelected(self)
 
 def ChannelSelection_channelSelected_callback2(self, ret):
-	print "=== PTS callback", ret
 	if ret is None:
 			return
 	if ret[1] == "noZap":
@@ -1879,6 +1878,7 @@ class StandbyPTS(Standby):
 	def showMessageBox(self):
 		if InfoBar and InfoBar.instance:
 			InfoBar.saveTimeshiftActions(InfoBar.instance, postaction="standby")
+			self.close()
 
 Screens.Standby.Standby = StandbyPTS
 
