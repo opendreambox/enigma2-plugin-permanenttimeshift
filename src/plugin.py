@@ -2,7 +2,7 @@
 # Permanent Timeshift Plugin for Enigma2 Dreamboxes
 # Coded by Homey (c) 2013
 #
-# Version: 2.1
+# Version: 2.2
 # Support: www.dreambox-plugins.de
 #####################################################
 from Components.ActionMap import ActionMap
@@ -50,7 +50,7 @@ from Tools.Log import Log
 #####  CONFIG SETTINGS   #####
 ##############################
 
-VERSION = "2.1"
+VERSION = "2.2"
 config.plugins.pts = ConfigSubsection()
 config.plugins.pts.enabled = ConfigYesNo(default = True)
 config.plugins.pts.maxevents = ConfigInteger(default=5, limits=(1, 99))
@@ -122,8 +122,8 @@ class PermanentTimeshiftSummary(Screen):
 
 	def __init__(self, session, parent):
 		Screen.__init__(self, session, parent)
-		self.skinName = "PermanentTimeshiftSummary"
-		self["eventname"] = Label(text="")
+		self.skinName = "PermanentTimeshiftSummary_v2"
+		self["eventname"] = StaticText("")
 		self["Service"] = PTSCurrentService(session.nav, parent)
 
 ###################################
@@ -182,9 +182,9 @@ class TimeshiftState(Screen):
 
 	def __init__(self, session, parent):
 		Screen.__init__(self, session, parent)
-		self.skinName = "PTSStandardTimeshiftState"
+		self.skinName = "PTSStandardTimeshiftState_v2"
 		self["state"] = Label(text="")
-		self["eventname"] = Label(text="")
+		self["eventname"] = StaticText("")
 		self["Service"] = PTSCurrentService(session.nav, parent)
 
 
@@ -429,7 +429,6 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 			self.pts_cleanUp_timer.start(3000, True)
 
 	def __evEventInfoChanged(self):
-
 		if not config.plugins.pts.enabled.value:
 			return
 
@@ -561,6 +560,9 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 		self.setPVRStateDialog()
 		InfoBarOrg.activateTimeshiftEnd(self, back)
 		#self.setPVRStateDialog()
+		ts = self.getTimeshift()
+		if ts is None:
+			return # timeshiftstart was failed
 		self.setSummary(True)
 		#set eventname in PTS Infobar and Display if pts is enabled
 		if config.plugins.pts.enabled.value:
@@ -1128,7 +1130,8 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 	def doSeekRelative(self, pts):
 		InfoBarOrg.doSeekRelative(self, pts)
 		if config.plugins.pts.enabled.value and config.usage.show_infobar_on_skip.value:
-			self.showAfterSeek()
+			#self.showAfterSeek()
+			self._mayShow() # to show pts-Infobar again on repeated skipping
 
 	def instantRecord(self):
 		if not config.plugins.pts.enabled.value or not self.timeshift_enabled:
@@ -1210,7 +1213,9 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 
 					statinfo = os_stat("%s/%s" % (config.usage.timeshift_path.value,filename))
 					# if no write for 5 sec = stranded timeshift
-					if statinfo.st_mtime < (time()-5.0):
+					timediff = self.pts_cleanUp_timer.getInterval()/1000
+					#if statinfo.st_mtime < (time()-5.0):
+					if statinfo.st_mtime < (time()-timediff):
 						Log.i("[PTS-Plugin] Erasing stranded timeshift %s" % filename)
 						self.BgFileEraser.erase("%s/%s" % (config.usage.timeshift_path.value,filename))
 
