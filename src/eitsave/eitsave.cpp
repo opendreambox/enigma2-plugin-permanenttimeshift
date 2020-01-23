@@ -80,11 +80,27 @@ static PyMethodDef module_methods[] = {
 	{NULL, NULL, 0, NULL} 
 };
 
+#if PY_MAJOR_VERSION <= 2
+
 PyMODINIT_FUNC
 initeitsave(void)
 {
 	Py_InitModule3("eitsave", module_methods,
 		"EIT Saver");
 }
+
+#else
+
+static struct PyModuleDef moduledef = {
+	PyModuleDef_HEAD_INIT, "eitsave", "EIT Saver", -1, module_methods,
+};
+
+PyObject *PyInit_eitsave()
+{
+	return PyModule_Create(&moduledef);
+}
+
+#endif
+
 };
 
