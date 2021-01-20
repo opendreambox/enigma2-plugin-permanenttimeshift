@@ -684,8 +684,8 @@ class InfoBar(InfoBarOrg, InfoBarTimeshiftState):
 				if self.seekstate != self.SEEK_STATE_PLAY:
 					self.setSeekState(self.SEEK_STATE_PLAY)
 				self.setSeekState(self.SEEK_STATE_STOP)
-				self.doSeek(3600 * 24 * 90000)
-				self.doSeek(3600 * 24 * 90000) #make second if sometimes first not work
+				ts = self.getTimeshift()
+				ts.stopTimeshift(2)
 				self.setSummary(False)
 				return 1
 			self.setSummary(False)
