@@ -1871,7 +1871,7 @@ Screens_Standby_Standby = Screens.Standby.Standby
 
 class StandbyPTS(Standby):
 	def __init__(self, session):
-		if InfoBar and InfoBar.instance and InfoBar.ptsGetSaveTimeshiftStatus(InfoBar.instance):
+		if InfoBar and InfoBar.instance and (InfoBar.ptsGetSaveTimeshiftStatus(InfoBar.instance) or (InfoBar.instance.timeshift_enabled and InfoBar.instance.isSeekable())):
 			self.skin = """<screen position="0,0" size="0,0"/>"""
 			Screen.__init__(self, session)
 			self.onFirstExecBegin.append(self.showMessageBox)
